@@ -1,0 +1,14 @@
+{
+  "app_title": "Pharmacy",
+  "home": "Home",
+  "inventory": "Inventory",
+  "sales": "Sales",
+  "reports": "Reports",
+  "settings": "Settings",
+  "language": "Language",
+  "arabic": "Arabic",
+  "english": "English",
+  "number_of_items": "Number of Items",
+  "expiration_alerts": "Expiration Alerts",
+  "today_sales": "Today's Sales"
+}

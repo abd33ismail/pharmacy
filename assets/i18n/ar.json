@@ -1,0 +1,14 @@
+{
+  "app_title": "الصيدلية",
+  "home": "الرئيسية",
+  "inventory": "المخزون",
+  "sales": "المبيعات",
+  "reports": "التقارير",
+  "settings": "الإعدادات",
+  "language": "اللغة",
+  "arabic": "العربية",
+  "english": "الإنجليزية",
+  "number_of_items": "عدد العناصر",
+  "expiration_alerts": "تنبيهات انتهاء الصلاحية",
+  "today_sales": "مبيعات اليوم"
+}
