@@ -1,0 +1,61 @@
+name: pharmacy
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Core & Localization
+  cupertino_icons: ^1.0.8
+  easy_localization: ^3.0.5 # MIGRATION
+  path_provider: ^2.1.0
+  path: ^1.9.0
+  sqflite: ^2.3.0
+  shared_preferences: ^2.2.2
+  http: ^1.2.0
+  intl: ^0.20.2
+  uuid: ^4.4.0
+
+  # UI
+  fl_chart: ^0.68.0
+
+  # Notifications & Firebase
+  flutter_local_notifications: ^17.0.0
+  firebase_core: ^2.25.0
+  cloud_firestore: ^4.14.0
+
+  # Icons
+  flutter_launcher_icons: ^0.13.1
+
+  # Scanner Dependencies
+  camera: ^0.11.0
+  image_picker: ^1.1.2
+  permission_handler: ^11.3.1
+  google_mlkit_barcode_scanning: ^0.11.0
+  google_mlkit_text_recognition: ^0.13.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/pharmacy.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+  assets:
+    # Path for easy_localization files
+    - assets/i18n/
+    - assets/images/

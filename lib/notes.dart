@@ -1,5 +1,5 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_translate/flutter_translate.dart';
 import 'datdbase.dart';
 
 class NotesScreen extends StatefulWidget {
@@ -28,78 +28,110 @@ class _NotesScreenState extends State<NotesScreen> {
     });
   }
 
-  void _showNoteDialog({Map<String, dynamic>? note}) {
-    final titleController = TextEditingController(text: note?['title'] ?? '');
-    final contentController = TextEditingController(text: note?['content'] ?? '');
+  void _showForm(int? id) async {
+    Map<String, dynamic>? existingNote;
+    if (id != null) {
+      existingNote = _notes.firstWhere((note) => note['note_id'] == id);
+    }
 
-    showDialog(
+    final titleController = TextEditingController(text: existingNote?['title']);
+    final contentController = TextEditingController(text: existingNote?['content']);
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(note == null ? translate('add_note') : translate('edit_note')),
-        content: Column(
+      elevation: 5,
+      isScrollControlled: true,
+      builder: (_) => Container(
+        padding: EdgeInsets.only(
+          top: 15,
+          left: 15,
+          right: 15,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 120,
+        ),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Title')),
-            TextField(controller: contentController, decoration: const InputDecoration(labelText: 'Content'), maxLines: 3),
+            TextField(
+              controller: titleController,
+              decoration: InputDecoration(hintText: 'title'.tr()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: contentController,
+              decoration: InputDecoration(hintText: 'content'.tr()),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () async {
+                final title = titleController.text;
+                final content = contentController.text;
+                if (id == null) {
+                  await _addNote({'title': title, 'content': content, 'created_at': DateTime.now().toString()});
+                } else {
+                  await _updateNote({'note_id': id, 'title': title, 'content': content});
+                }
+                titleController.text = '';
+                contentController.text = '';
+                Navigator.of(context).pop();
+              },
+              child: Text(id == null ? 'add_note'.tr() : 'update'.tr()),
+            )
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text(translate('cancel'))),
-          ElevatedButton(
-            onPressed: () async {
-              final noteData = {
-                'title': titleController.text,
-                'content': contentController.text,
-                'created_at': DateTime.now().toIso8601String(),
-              };
-              if (note == null) {
-                await DatabaseHelper.instance.addNote(noteData);
-              } else {
-                noteData['note_id'] = note['note_id'];
-                await DatabaseHelper.instance.updateNote(noteData);
-              }
-              Navigator.pop(context);
-              _refreshNotes();
-            },
-            child: Text(translate('save')),
-          ),
-        ],
       ),
     );
+  }
+
+  Future<void> _addNote(Map<String, dynamic> note) async {
+    await DatabaseHelper.instance.addNote(note);
+    _refreshNotes();
+  }
+
+  Future<void> _updateNote(Map<String, dynamic> note) async {
+    await DatabaseHelper.instance.updateNote(note);
+    _refreshNotes();
+  }
+
+  void _deleteNote(int id) async {
+    await DatabaseHelper.instance.deleteNote(id);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('successfully_deleted_note'.tr()),
+    ));
+    _refreshNotes();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(translate('notes')), centerTitle: true),
+      appBar: AppBar(
+        title: Text('notes'.tr()),
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _notes.isEmpty
-              ? Center(child: Text(translate('no_notes')))
-              : ListView.builder(
-                  itemCount: _notes.length,
-                  padding: const EdgeInsets.all(8),
-                  itemBuilder: (context, index) {
-                    final note = _notes[index];
-                    return Card(
-                      child: ListTile(
-                        title: Text(note['title'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text(note['content']),
-                        onTap: () => _showNoteDialog(note: note),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () async {
-                            await DatabaseHelper.instance.deleteNote(note['note_id']);
-                            _refreshNotes();
-                          },
-                        ),
-                      ),
-                    );
-                  },
+          : ListView.builder(
+              itemCount: _notes.length,
+              itemBuilder: (context, index) => Card(
+                color: Colors.orange[200],
+                margin: const EdgeInsets.all(15),
+                child: ListTile(
+                  title: Text(_notes[index]['title'] ?? ''),
+                  subtitle: Text(_notes[index]['content'] ?? ''),
+                  trailing: SizedBox(
+                    width: 100,
+                    child: Row(
+                      children: [
+                        IconButton(icon: const Icon(Icons.edit), onPressed: () => _showForm(_notes[index]['note_id'])),
+                        IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteNote(_notes[index]['note_id'])),
+                      ],
+                    ),
+                  ),
                 ),
+              ),
+            ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _showNoteDialog(),
         child: const Icon(Icons.add),
+        onPressed: () => _showForm(null),
       ),
     );
   }
