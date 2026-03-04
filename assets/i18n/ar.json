@@ -55,5 +55,20 @@
   "add_note": "إضافة ملاحظة",
   "edit_note": "تعديل الملاحظة",
   "no_notes": "لا توجد ملاحظات",
-  "save": "حفظ"
+  "save": "حفظ",
+  "total_contents": "إجمالي محتويات الصيدلية",
+  "todays_sales": "مبيعات اليوم",
+  "scan_product": "مسح منتج",
+  "daily_invoices": "الفواتير اليومية",
+  "date": "التاريخ",
+  "total_quantity": "إجمالي الكمية",
+  "report_for": "تقرير لـ",
+  "total_cost": "إجمالي التكلفة",
+  "net_profit": "صافي الربح",
+  "delete_records_for_date": "حذف سجلات هذا التاريخ",
+  "confirm_delete_for_date": "هل أنت متأكد من حذف جميع السجلات لتاريخ {}؟",
+  "records_deleted_successfully": "تم حذف السجلات بنجاح",
+  "confirm_delete": "تأكيد الحذف",
+  "are_you_sure_delete_invoice": "هل أنت متأكد من حذف هذه الفاتورة؟",
+  "invoice_deleted": "تم حذف الفاتورة بنجاح"
 }

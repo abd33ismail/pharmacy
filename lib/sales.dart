@@ -2,7 +2,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:pharmacy/currency_service.dart';
 import 'datdbase.dart';
-
+import 'dart:async';
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
 
@@ -16,17 +16,23 @@ class _SalesScreenState extends State<SalesScreen> {
   List<Map<String, dynamic>> _filteredProducts = [];
   final Map<int, int> _selectedQuantities = {};
   bool _isLoading = true;
+  late StreamSubscription _dbSubscription;
+
 
   @override
   void initState() {
     super.initState();
     _loadProducts();
     _searchController.addListener(_filterProducts);
+    _dbSubscription = DatabaseHelper.instance.onDatabaseChanged.listen((_) {
+      _loadProducts();
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _dbSubscription.cancel();
     super.dispose();
   }
 

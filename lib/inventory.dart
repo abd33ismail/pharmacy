@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:pharmacy/currency_service.dart';
 import 'add-edd-product.dart';
 import 'datdbase.dart';
+import 'dart:async';
+
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -17,6 +19,7 @@ class _InventoryScreenState extends State<InventoryScreen> with SingleTickerProv
   List<Map<String, dynamic>> _allProducts = [];
   bool _isLoading = true;
 
+
   final List<String> _categories = ['Medicines', 'Prescriptions', 'Supplies', 'Accessories'];
 
   @override
@@ -24,6 +27,7 @@ class _InventoryScreenState extends State<InventoryScreen> with SingleTickerProv
     super.initState();
     _tabController = TabController(length: _categories.length, vsync: this);
     _refreshProducts();
+    DatabaseHelper.instance.onDatabaseChanged.listen((_) => _refreshProducts());
   }
 
   Future<void> _refreshProducts() async {
@@ -39,6 +43,7 @@ class _InventoryScreenState extends State<InventoryScreen> with SingleTickerProv
   void dispose() {
     _tabController.dispose();
     _searchController.dispose();
+
     super.dispose();
   }
 
@@ -133,9 +138,9 @@ class _InventoryScreenState extends State<InventoryScreen> with SingleTickerProv
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
-              controller: _tabController,
-              children: _categories.map((c) => _buildProductList(c)).toList(),
-            ),
+        controller: _tabController,
+        children: _categories.map((c) => _buildProductList(c)).toList(),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           final result = await Navigator.push(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'daily-reports.dart';
 import 'monthly-reports.dart';
+import 'daily_invoices_report.dart'; // استيراد التقرير الجديد
 
 class ReportsScreen extends StatelessWidget {
   const ReportsScreen({super.key});
@@ -22,6 +23,14 @@ class ReportsScreen extends StatelessWidget {
               title: 'daily_report'.tr(),
               icon: Icons.today,
               screen: const DailyReportsScreen(),
+            ),
+            const SizedBox(height: 20),
+            // إضافة زر تقرير الفواتير اليومي الجديد
+            _buildButton(
+              context,
+              title: 'invoices_report'.tr(),
+              icon: Icons.receipt_long,
+              screen: const DailyInvoicesReport(),
             ),
             const SizedBox(height: 20),
             _buildButton(

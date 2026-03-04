@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pharmacy/currency_service.dart';
 import 'datdbase.dart';
+import 'dart:async';
+
 
 class DailyReportsScreen extends StatefulWidget {
   const DailyReportsScreen({super.key});
@@ -16,17 +18,15 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
   List<Map<String, dynamic>> _groupedSales = [];
   List<Map<String, dynamic>> _currencyReports = [];
   bool _isLoading = true;
+  late StreamSubscription _dbChangesSubscription;
+
 
   @override
   void initState() {
     super.initState();
     _loadReportData();
-  }
+    _dbChangesSubscription = DatabaseHelper.instance.onDatabaseChanged.listen((_) => _loadReportData());
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _loadReportData();
   }
 
   Future<void> _loadReportData() async {
@@ -35,19 +35,42 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
     final db = await DatabaseHelper.instance.database;
     String dateStr = DateFormat('yyyy-MM-dd', 'en_US').format(_selectedDate);
 
+    // Updated query to subtract refunded items from the daily product totals
     final salesResults = await db.rawQuery('''
       SELECT 
-        p.name as productName, 
-        p.sale_currency,
-        SUM(si.quantity) as totalQuantity,
-        SUM(si.price * si.quantity) as totalPrice
-      FROM Sale_Items si
-      JOIN Sales s ON si.sale_id = s.sale_id
-      JOIN Products p ON si.product_id = p.product_id
-      WHERE DATE(s.sale_date) = ?
-      GROUP BY p.name, p.sale_currency
-      ORDER BY p.name
-    ''', [dateStr]);
+        productName,
+        sale_currency,
+        SUM(qty) as totalQuantity,
+        SUM(total) as totalPrice
+      FROM (
+        SELECT 
+          p.name as productName, 
+          p.sale_currency,
+          SUM(si.quantity) as qty,
+          SUM(si.price * si.quantity) as total
+        FROM Sale_Items si
+        JOIN Sales s ON si.sale_id = s.sale_id
+        JOIN Products p ON si.product_id = p.product_id
+        WHERE DATE(s.sale_date) = ?
+        GROUP BY p.name, p.sale_currency
+        
+        UNION ALL
+        
+        SELECT 
+          p.name as productName, 
+          p.sale_currency,
+          -SUM(ri.quantity) as qty,
+          -SUM(ri.price * ri.quantity) as total
+        FROM Refund_Items ri
+        JOIN Refunds r ON ri.refund_id = r.refund_id
+        JOIN Products p ON ri.product_id = p.product_id
+        WHERE DATE(r.refund_date) = ?
+        GROUP BY p.name, p.sale_currency
+      ) 
+      GROUP BY productName, sale_currency
+      HAVING totalQuantity > 0 OR totalPrice > 0
+      ORDER BY productName
+    ''', [dateStr, dateStr]);
 
     if (mounted) {
       setState(() {
@@ -63,7 +86,6 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('delete_records_for_date'.tr()),
-        // DEFINITIVE FIX: Use namedArgs for easy_localization
         content: Text('confirm_delete_for_date'.tr(namedArgs: {'date': DateFormat.yMMMd().format(_selectedDate)})),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text('cancel'.tr())),
@@ -115,73 +137,80 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    Text('${'date'.tr()}: $localizedDate', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    ElevatedButton.icon(onPressed: () => _selectDate(context), icon: const Icon(Icons.calendar_today), label: Text('select_date'.tr())),
-                  ]),
-                ),
-                Expanded(
-                  child: _groupedSales.isEmpty
-                      ? Center(child: Text('no_sales_for_date'.tr()))
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                          itemCount: _groupedSales.length,
-                          itemBuilder: (context, index) {
-                            final sale = _groupedSales[index];
-                            final price = (sale['totalPrice'] as num?)?.toDouble() ?? 0.0;
-                            final currency = sale['sale_currency'] as String?;
-                            final symbol = currencyLabel(currency == 'usd' ? Currency.usd : Currency.syp);
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('${'date'.tr()}: $localizedDate', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ElevatedButton.icon(onPressed: () => _selectDate(context), icon: const Icon(Icons.calendar_today), label: Text('select_date'.tr())),
+            ]),
+          ),
+          Expanded(
+            child: _groupedSales.isEmpty
+                ? Center(child: Text('no_sales_for_date'.tr()))
+                : ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              itemCount: _groupedSales.length,
+              itemBuilder: (context, index) {
+                final sale = _groupedSales[index];
+                final price = (sale['totalPrice'] as num?)?.toDouble() ?? 0.0;
+                final qty = (sale['totalQuantity'] as num?)?.toInt() ?? 0;
+                
+                final currency = sale['sale_currency'] as String?;
+                final symbol = currencyLabel(currency == 'usd' ? Currency.usd : Currency.syp);
 
-                            return Card(
-                              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              child: ListTile(
-                                leading: CircleAvatar(child: Text((index + 1).toString())),
-                                title: Text(sale['productName'] as String, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                subtitle: Text('${'total_quantity'.tr()}: ${sale['totalQuantity']}'),
-                                trailing: Text(
-                                  '$symbol${formatPrice(price)}',
-                                  style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-                if (_currencyReports.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: _currencyReports.map((report) {
-                        final currencyStr = report['currency'] as String;
-                        final symbol = currencyLabel(currencyStr == 'usd' ? Currency.usd : Currency.syp);
-                        return Expanded(
-                          child: Card(
-                            margin: const EdgeInsets.symmetric(horizontal: 4.0),
-                            color: Colors.lightBlue[50],
-                            child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text('${'report_for'.tr()} ${currencyStr.toUpperCase()}', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                                const Divider(height: 15),
-                                _buildStatRow('total_sales'.tr(), (report['sales'] as num).toDouble(), symbol, Colors.blue),
-                                const SizedBox(height: 8),
-                                _buildStatRow('total_cost'.tr(), (report['cost'] as num).toDouble(), symbol, Colors.orange),
-                                const SizedBox(height: 8),
-                                _buildStatRow('net_profit'.tr(), (report['profit'] as num).toDouble(), symbol, Colors.green, isBold: true),
-                              ]),
-                            ),
-                          ),
-                        );
-                      }).toList(),
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: ListTile(
+                    leading: CircleAvatar(child: Text((index + 1).toString())),
+                    title: Text((sale['productName'] ?? 'N/A') as String, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text('${'total_quantity'.tr()}: $qty'),
+                    trailing: Text(
+                      '$symbol${formatPrice(price)}',
+                      style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                   ),
-                const SizedBox(height: 8),
-              ],
+                );
+              },
             ),
+          ),
+          if (_currencyReports.any((report) => (report['sales'] as num?) != null && (report['sales'] as num).toDouble() > 0))
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _currencyReports.map((report) {
+                  final currencyStr = (report['currency'] ?? 'N/A') as String;
+                  final symbol = currencyLabel(currencyStr == 'usd' ? Currency.usd : Currency.syp);
+                  
+                  final s = (report['sales'] as num?)?.toDouble() ?? 0.0;
+                  final c = (report['cost'] as num?)?.toDouble() ?? 0.0;
+                  final p = (report['profit'] as num?)?.toDouble() ?? 0.0;
+
+                  return Expanded(
+                    child: Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                      color: Colors.lightBlue[50],
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('${'report_for'.tr()} ${currencyStr.toUpperCase()}', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                          const Divider(height: 15),
+                          _buildStatRow('total_sales'.tr(), s, symbol, Colors.blue),
+                          const SizedBox(height: 8),
+                          _buildStatRow('total_cost'.tr(), c, symbol, Colors.orange),
+                          const SizedBox(height: 8),
+                          _buildStatRow('net_profit'.tr(), p, symbol, Colors.green, isBold: true),
+                        ]),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
     );
   }
 
