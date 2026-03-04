@@ -30,6 +30,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
   double purchasePrice = 0;
   Currency purchaseCurrency = Currency.syp;
 
+  bool _isSaving = false; // To disable button during save
+
   @override
   void initState() {
     super.initState();
@@ -86,12 +88,19 @@ class _AddProductScreenState extends State<AddProductScreen> {
   }
 
   Future<void> _saveProduct() async {
+    if (_isSaving) return; // Prevent multiple submissions
+
     if (!_formKey.currentState!.validate()) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('please_fill_required_fields'.tr())),
       );
       return;
     }
+
+    setState(() {
+      _isSaving = true;
+    });
 
     try {
       final productData = {
@@ -109,9 +118,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
       };
 
       if (widget.product == null) {
+        // Save locally instantly
         await DatabaseHelper.instance.addProduct(productData);
 
-        await addMedicine(
+        // Send to server in the background (fire and forget)
+        addMedicine(
           name: _nameController.text.trim(),
           saleprice: salePrice.toString(),
           quantity: _quantityController.text.trim(),
@@ -128,22 +139,32 @@ class _AddProductScreenState extends State<AddProductScreen> {
         await DatabaseHelper.instance.updateProduct(productData);
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('product_saved_successfully'.tr())),
-        );
-        Navigator.pop(context, true);
-      }
+      if (!mounted) return; // Crucial check before using context
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('product_saved_successfully'.tr())),
+      );
+
+      Navigator.pop(context, true); // Pop with success result
 
     } catch (e) {
+      if (!mounted) return; // Crucial check before using context
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${'error_saving_product'.tr()}: $e'),
           backgroundColor: Colors.red,
         ),
       );
+    } finally {
+       if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -190,9 +211,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
               _buildImagePicker(),
               const SizedBox(height: 16),
               ElevatedButton.icon(
-                icon: const Icon(Icons.save),
+                icon: _isSaving 
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
+                    : const Icon(Icons.save),
                 label: Text(widget.product == null ? 'add_product'.tr() : 'edit_product'.tr()),
-                onPressed: _saveProduct,
+                onPressed: _isSaving ? null : _saveProduct, // Disable button when saving
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size.fromHeight(50),
                   textStyle: const TextStyle(fontSize: 18),

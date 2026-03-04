@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'inventory.dart';
 import 'sales.dart';
@@ -49,15 +48,15 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _selectedIndex = 2;
+  int _selectedIndex = 2; // Default to Home
 
-  List<Widget> get _widgetOptions => [
-        const InventoryScreen(),
-        const SalesScreen(),
-        const HomeScreen(),
-        const ReportsScreen(),
-        const SettingsScreen(),
-      ];
+  final List<Widget> _widgetOptions = [
+    const InventoryScreen(),
+    const SalesScreen(),
+    const HomeScreen(),
+    const ReportsScreen(),
+    const SettingsScreen(),
+  ];
 
   void _onItemTapped(int index) {
     setState(() {
@@ -68,7 +67,10 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _widgetOptions[_selectedIndex],
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _widgetOptions,
+      ),
       bottomNavigationBar: BottomNavigationBar(
         items: <BottomNavigationBarItem>[
           BottomNavigationBarItem(

@@ -133,9 +133,9 @@ class _InventoryScreenState extends State<InventoryScreen> with SingleTickerProv
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
-              controller: _tabController,
-              children: _categories.map((c) => _buildProductList(c)).toList(),
-            ),
+        controller: _tabController,
+        children: _categories.map((c) => _buildProductList(c)).toList(),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           final result = await Navigator.push(
