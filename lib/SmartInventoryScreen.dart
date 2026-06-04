@@ -446,16 +446,19 @@ class BarcodeScannerPage extends StatefulWidget {
 class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
   late MobileScannerController controller;
   bool _isDetected = false;
+  DateTime? _lastDetectionTime;
+  static const Duration _debounceDelay = Duration(seconds: 2);
 
   @override
   void initState() {
     super.initState();
     controller = MobileScannerController(
-      detectionSpeed: DetectionSpeed.normal,
+      detectionSpeed: DetectionSpeed.nonstop,
       facing: CameraFacing.back,
       torchEnabled: false,
       returnImage: false,
-      formats: [BarcodeFormat.ean8,
+      formats: [
+        BarcodeFormat.ean8,
         BarcodeFormat.ean13,
         BarcodeFormat.code128,
         BarcodeFormat.code39,
@@ -463,7 +466,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
         BarcodeFormat.itf,
         BarcodeFormat.upcA,
         BarcodeFormat.upcE,
-
+        BarcodeFormat.qrCode,
       ],
     );
   }
@@ -472,6 +475,28 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
   void dispose() {
     controller.dispose();
     super.dispose();
+  }
+
+  void _processBarcode(String barcodeValue) {
+    final now = DateTime.now();
+    
+    // تجنب المعالجة المتكررة في فترة قصيرة
+    if (_isDetected && _lastDetectionTime != null) {
+      if (now.difference(_lastDetectionTime!) < _debounceDelay) {
+        debugPrint("Barcode detection debounced");
+        return;
+      }
+    }
+
+    _isDetected = true;
+    _lastDetectionTime = now;
+
+    debugPrint("Barcode detected: $barcodeValue");
+    HapticFeedback.mediumImpact();
+
+    if (mounted) {
+      Navigator.pop(context, barcodeValue);
+    }
   }
 
   @override
@@ -483,7 +508,6 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         actions: [
-          // لتجنب خطأ torchState غير المعرف، نستخدم controller نفسه كمستمع للقيمة
           ValueListenableBuilder(
             valueListenable: controller,
             builder: (context, state, child) {
@@ -504,7 +528,6 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
           MobileScanner(
             controller: controller,
             fit: BoxFit.cover,
-
             errorBuilder: (context, error, child) {
               return Center(
                 child: Column(
@@ -512,37 +535,42 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
                   children: [
                     const Icon(Icons.error, color: Colors.red, size: 60),
                     const SizedBox(height: 10),
-                    Text("خطأ في الكاميرا: ${error.errorCode}", 
-                        style: const TextStyle(color: Colors.white, fontSize: 16)),
+                    Text(
+                      "خطأ في الكاميرا: ${error.errorCode}",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 16),
+                    ),
                     const SizedBox(height: 10),
-                    const Text("تأكد من إعطاء الصلاحيات أو جرب البحث اليدوي", 
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey)),
+                    const Text(
+                      "تأكد من إعطاء الصلاحيات أو جرب البحث اليدوي",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
                   ],
                 ),
               );
             },
-            onDetect: (capture) async {
-              if (_isDetected) return;
+            onDetect: (capture) {
+              final List<Barcode> barcodes = capture.barcodes;
+              
+              if (barcodes.isEmpty) {
+                debugPrint("No barcodes detected");
+                return;
+              }
 
-              final barcode = capture.barcodes.first;
-
-              if (barcode.rawValue != null &&
-                  barcode.rawValue!.isNotEmpty) {
-
-                _isDetected = true;
-
-                await controller.stop();
-
-                HapticFeedback.mediumImpact();
-
-                if (mounted) {
-                  Navigator.pop(context, barcode.rawValue);
+              for (final barcode in barcodes) {
+                final String? rawValue = barcode.rawValue;
+                
+                debugPrint('Detected barcode: $rawValue');
+                
+                if (rawValue != null && rawValue.isNotEmpty && !_isDetected) {
+                  _processBarcode(rawValue);
+                  break; // معالجة الباركود الأول فقط
                 }
               }
             },
           ),
-          // إطار المسح المرئي للمساعدة في التركيز
+          // إطار المسح المرئي
           Center(
             child: Container(
               width: 260,
@@ -553,11 +581,18 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
               ),
               child: Stack(
                 children: [
-                  Center(child: Container(width: double.infinity, height: 1, color: Colors.red.withOpacity(0.5))),
+                  Center(
+                    child: Container(
+                      width: double.infinity,
+                      height: 2,
+                      color: Colors.red.withOpacity(0.7),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
+          // نص التعليمات
           const Positioned(
             bottom: 40,
             left: 0,
@@ -565,7 +600,11 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
             child: Text(
               "وجه الكاميرا نحو باركود المنتج",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 16, backgroundColor: Colors.black45),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                backgroundColor: Colors.black45,
+              ),
             ),
           ),
         ],
