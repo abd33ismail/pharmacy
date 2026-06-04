@@ -36,10 +36,8 @@ dependencies:
   flutter_launcher_icons: ^0.13.1
 
   # Scanner Dependencies
-  camera: ^0.11.0
   image_picker: ^1.1.2
   permission_handler: ^11.0.0
-  google_mlkit_barcode_scanning: ^0.13.0
   mobile_scanner: ^5.2.3
 
 dev_dependencies:

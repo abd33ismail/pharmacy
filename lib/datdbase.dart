@@ -55,7 +55,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 16, onCreate: _createDB, onUpgrade: _onUpgrade);
+    return await openDatabase(path, version: 17, onCreate: _createDB, onUpgrade: _onUpgrade);
   }
 
   Future _onUpgrade(Database db, int oldVer, int newVer) async {
@@ -65,35 +65,30 @@ class DatabaseHelper {
     }
     if (oldVer < 15) {
       try { await db.execute("ALTER TABLE Sales ADD COLUMN invoice_daily TEXT"); } catch (_) {}
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS DailyInvoiceCounter (
-          date TEXT PRIMARY KEY,
-          last_number INTEGER
-        )
-      ''');
+      await db.execute('''CREATE TABLE IF NOT EXISTS DailyInvoiceCounter (date TEXT PRIMARY KEY, last_number INTEGER)''');
     }
     if (oldVer < 16) {
-      try {
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_barcode ON Products(barcode)');
-      } catch (_) {}
+      try { await db.execute('CREATE INDEX IF NOT EXISTS idx_products_barcode ON Products(barcode)'); } catch (_) {}
+    }
+    // ✅ تحديث الإصدار 17: إضافة عمود الأرشفة للمبيعات والمرتجعات
+    if (oldVer < 17) {
+      try { await db.execute("ALTER TABLE Sales ADD COLUMN archived INTEGER DEFAULT 0"); } catch (_) {}
+      try { await db.execute("ALTER TABLE Refunds ADD COLUMN archived INTEGER DEFAULT 0"); } catch (_) {}
     }
   }
 
   Future _createDB(Database db, int version) async {
     await db.execute('''CREATE TABLE Products (product_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL, barcode TEXT UNIQUE, purchase_price REAL, purchase_currency TEXT, sale_price REAL, sale_currency TEXT, quantity INTEGER, expiry_date TEXT, image TEXT, created_at TEXT, uuid TEXT, synced INTEGER DEFAULT 0, updated_at TEXT, deleted INTEGER DEFAULT 0)''');
-    
-    // إضافة Index للباركود للبحث الفوري
     await db.execute('CREATE INDEX idx_products_barcode ON Products(barcode)');
-
-    await db.execute('''CREATE TABLE Sales (sale_id INTEGER PRIMARY KEY AUTOINCREMENT, sale_date TEXT, total_amount REAL, edited INTEGER DEFAULT 0, synced INTEGER DEFAULT 0, invoice_daily TEXT)''');
+    await db.execute('''CREATE TABLE Sales (sale_id INTEGER PRIMARY KEY AUTOINCREMENT, sale_date TEXT, total_amount REAL, edited INTEGER DEFAULT 0, synced INTEGER DEFAULT 0, invoice_daily TEXT, archived INTEGER DEFAULT 0)''');
     await db.execute('''CREATE TABLE Sale_Items (id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, quantity INTEGER, price REAL, purchase_price REAL, FOREIGN KEY (sale_id) REFERENCES Sales (sale_id) ON DELETE CASCADE, FOREIGN KEY (product_id) REFERENCES Products (product_id))''');
-    await db.execute('''CREATE TABLE Refunds (refund_id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, refund_date TEXT, total_refund REAL, note TEXT, synced INTEGER DEFAULT 0)''');
+    await db.execute('''CREATE TABLE Refunds (refund_id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, refund_date TEXT, total_refund REAL, note TEXT, synced INTEGER DEFAULT 0, archived INTEGER DEFAULT 0)''');
     await db.execute('''CREATE TABLE Refund_Items (id INTEGER PRIMARY KEY AUTOINCREMENT, refund_id INTEGER, product_id INTEGER, quantity INTEGER, price REAL, purchase_price REAL)''');
     await db.execute('''CREATE TABLE Notes (note_id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, content TEXT, created_at TEXT)''');
     await db.execute('''CREATE TABLE DailyInvoiceCounter (date TEXT PRIMARY KEY, last_number INTEGER)''');
   }
 
-  // --- المزامنة التلقائية ---
+  // --- المزامنة ---
   Future<void> syncAllData() async {
     try {
       await pushProducts();
@@ -154,20 +149,9 @@ class DatabaseHelper {
   Future<void> pushSales() async {
     final db = await database;
     final unsyncedSales = await db.query('Sales', where: 'synced = 0');
-    
-    if (unsyncedSales.isNotEmpty) {
-      debugPrint("Found ${unsyncedSales.length} unsynced sales. Starting sync...");
-    }
-
     for (var sale in unsyncedSales) {
       int saleId = sale['sale_id'] as int;
-      final items = await db.rawQuery("""
-        SELECT si.*, p.name 
-        FROM Sale_Items si 
-        JOIN Products p ON si.product_id = p.product_id
-        WHERE si.sale_id = ?
-      """, [saleId]);
-
+      final items = await db.rawQuery("""SELECT si.*, p.name FROM Sale_Items si JOIN Products p ON si.product_id = p.product_id WHERE si.sale_id = ?""", [saleId]);
       Map<String, dynamic> invoiceData = {
         "sale_id": saleId,
         "invoice_number": sale['invoice_daily'] ?? "INV-$saleId",
@@ -175,37 +159,16 @@ class DatabaseHelper {
         "items_count": items.length,
         "sale_date": sale['sale_date'],
         "is_refunded": 0,
-        "items": items.map((item) => {
-          "product_name": item['name'],
-          "quantity": item['quantity'],
-          "price": item['price']
-        }).toList()
+        "items": items.map((item) => {"product_name": item['name'], "quantity": item['quantity'], "price": item['price']}).toList()
       };
-
       try {
-        var res = await http.post(
-          Uri.parse("http://10.0.2.2/pharmacy_api/save_invoice.php"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode(invoiceData),
-        );
-
+        var res = await http.post(Uri.parse("http://10.0.2.2/pharmacy_api/save_invoice.php"), headers: {"Content-Type": "application/json"}, body: jsonEncode(invoiceData));
         if (res.statusCode == 200) {
           final serverData = jsonDecode(res.body);
-          final newInvoiceNumber = serverData['invoice_number'];
-          
-          await db.update('Sales', {
-            'synced': 1, 
-            'invoice_daily': newInvoiceNumber
-          }, where: 'sale_id = ?', whereArgs: [saleId]);
-          
-          debugPrint("Sale $saleId synced successfully with server invoice: $newInvoiceNumber");
+          await db.update('Sales', {'synced': 1, 'invoice_daily': serverData['invoice_number']}, where: 'sale_id = ?', whereArgs: [saleId]);
           notifyListeners();
-        } else {
-          debugPrint("Failed to sync sale $saleId: ${res.body}");
         }
-      } catch (e) {
-        debugPrint("Sales sync error for ID $saleId: $e");
-      }
+      } catch (_) {}
     }
   }
 
@@ -245,8 +208,7 @@ class DatabaseHelper {
     return res;
   }
 
-  Future<List<Map<String, dynamic>>> queryAllProducts() async => 
-      (await database).query('Products', where: 'deleted = 0', orderBy: 'name ASC');
+  Future<List<Map<String, dynamic>>> queryAllProducts() async => (await database).query('Products', where: 'deleted = 0', orderBy: 'name ASC');
   
   Future<int> getTotalProductCount() async {
     final res = await (await database).rawQuery('SELECT COUNT(*) FROM Products WHERE deleted = 0');
@@ -261,13 +223,10 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> queryStockForExpiration() async => (await database).rawQuery("SELECT p.product_id, p.name AS product_name, p.expiry_date, p.quantity FROM Products p WHERE p.deleted = 0 AND p.quantity > 0 AND p.expiry_date != '' ORDER BY p.expiry_date ASC");
 
-  // --- المبيعات ---
   Future<String> generateDailyInvoiceNumber(DatabaseExecutor txn) async {
     final now = DateTime.now();
     final dateKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
-
     final existing = await txn.query('DailyInvoiceCounter', where: 'date = ?', whereArgs: [dateKey]);
-
     int newNumber;
     if (existing.isEmpty) {
       newNumber = 1;
@@ -284,12 +243,7 @@ class DatabaseHelper {
     final db = await database;
     int saleId = await db.transaction((txn) async {
       String dailyNumber = await generateDailyInvoiceNumber(txn);
-      int id = await txn.insert('Sales', {
-        'sale_date': DateTime.now().toIso8601String(), 
-        'total_amount': total, 
-        'synced': 0, 
-        'invoice_daily': dailyNumber,
-      });
+      int id = await txn.insert('Sales', {'sale_date': DateTime.now().toIso8601String(), 'total_amount': total, 'synced': 0, 'invoice_daily': dailyNumber, 'archived': 0});
       for (var item in items) {
         final p = await txn.query('Products', where: 'product_id = ?', whereArgs: [item['product_id']]);
         double cost = (p.first['purchase_price'] as num?)?.toDouble() ?? 0.0;
@@ -303,43 +257,34 @@ class DatabaseHelper {
     return saleId;
   }
 
-  Future<void> updateInvoiceNumber(int saleId, String invoiceNumber) async {
-    final db = await database;
-    await db.update('Sales', {'invoice_daily': invoiceNumber, 'synced': 1}, where: 'sale_id = ?', whereArgs: [saleId]);
-    notifyListeners();
-  }
-
+  // ✅ تعديل دالة الحذف لتصبح أرشفة (تخفي الفاتورة من اليومية وتحتفظ بها للشهرية)
   Future<void> deleteSale(int saleId) async {
     final db = await database;
-    await db.transaction((txn) async {
-      final refund = await txn.query('Refunds', where: 'sale_id = ?', whereArgs: [saleId]);
-      if (refund.isEmpty) {
-        final items = await txn.query('Sale_Items', where: 'sale_id = ?', whereArgs: [saleId]);
-        for (var item in items) {
-          await txn.rawUpdate('UPDATE Products SET quantity = quantity + ?, synced = 0 WHERE product_id = ?', [item['quantity'], item['product_id']]);
-        }
-      }
-      await txn.delete('Refund_Items', where: 'refund_id IN (SELECT refund_id FROM Refunds WHERE sale_id = ?)', whereArgs: [saleId]);
-      await txn.delete('Refunds', where: 'sale_id = ?', whereArgs: [saleId]);
-      await txn.delete('Sale_Items', where: 'sale_id = ?', whereArgs: [saleId]);
-      await txn.delete('Sales', where: 'sale_id = ?', whereArgs: [saleId]);
-    });
+    await db.update('Sales', {'archived': 1}, where: 'sale_id = ?', whereArgs: [saleId]);
+    await db.update('Refunds', {'archived': 1}, where: 'sale_id = ?', whereArgs: [saleId]);
     notifyListeners();
   }
 
+  // ✅ جلب فواتير اليوم (غير المؤرشفة فقط) لتنظيف الشاشة
   Future<List<Map<String, dynamic>>> getTodayInvoices(DateTime d) async {
     final start = DateTime(d.year, d.month, d.day).toIso8601String();
     final end = DateTime(d.year, d.month, d.day).add(const Duration(days: 1)).toIso8601String();
-    return await (await database).rawQuery("SELECT s.*, (SELECT COUNT(*) FROM Sale_Items WHERE sale_id = s.sale_id) as items_count, (SELECT COUNT(*) FROM Refunds WHERE sale_id = s.sale_id) as is_refunded FROM Sales s WHERE sale_date >= ? AND sale_date < ? ORDER BY sale_date DESC", [start, end]);
+    return await (await database).rawQuery("""
+      SELECT s.*, 
+             (SELECT COUNT(*) FROM Sale_Items WHERE sale_id = s.sale_id) as items_count, 
+             (SELECT COUNT(*) FROM Refunds WHERE sale_id = s.sale_id) as is_refunded 
+      FROM Sales s 
+      WHERE sale_date >= ? AND sale_date < ? AND archived = 0
+      ORDER BY sale_date DESC
+    """, [start, end]);
   }
   
   Future<List<Map<String, dynamic>>> getInvoiceDetails(int id) async => (await database).rawQuery("SELECT si.*, p.name, p.sale_currency FROM Sale_Items si JOIN Products p ON si.product_id = p.product_id WHERE si.sale_id = ?", [id]);
 
-  // --- المرتجعات ---
   Future<void> createRefund(int saleId, List<Map<String, dynamic>> items) async {
     final db = await database;
     await db.transaction((txn) async {
-      int rId = await txn.insert('Refunds', {'sale_id': saleId, 'refund_date': DateTime.now().toIso8601String(), 'total_refund': 0, 'synced': 0});
+      int rId = await txn.insert('Refunds', {'sale_id': saleId, 'refund_date': DateTime.now().toIso8601String(), 'total_refund': 0, 'synced': 0, 'archived': 0});
       double total = 0;
       for (var item in items) {
         total += (item['price'] as num) * (item['quantity'] as num);
@@ -353,27 +298,8 @@ class DatabaseHelper {
   }
 
   // --- التقارير ---
-  Future<Map<String, double>> getDailyProfitStats(DateTime d) async {
-    final start = DateTime(d.year, d.month, d.day).toIso8601String();
-    final end = DateTime(d.year, d.month, d.day).add(const Duration(days: 1)).toIso8601String();
-    final db = await database;
-    final s = await db.rawQuery("SELECT COALESCE(SUM(si.price * si.quantity), 0) AS total_sales, COALESCE(SUM(si.purchase_price * si.quantity), 0) AS total_cost FROM Sale_Items si JOIN Sales sa ON si.sale_id = sa.sale_id WHERE sa.sale_date >= ? AND sa.sale_date < ?", [start, end]);
-    final r = await db.rawQuery("SELECT COALESCE(SUM(ri.price * ri.quantity), 0) AS total_refund, COALESCE(SUM(ri.purchase_price * ri.quantity), 0) AS refund_cost FROM Refund_Items ri JOIN Refunds re ON ri.refund_id = re.refund_id WHERE re.refund_date >= ? AND re.refund_date < ?", [start, end]);
-    double rev = (s.first['total_sales'] as num).toDouble() - (r.first['total_refund'] as num).toDouble();
-    double cost = (s.first['total_cost'] as num).toDouble() - (r.first['refund_cost'] as num).toDouble();
-    return {'sales': rev, 'cost': cost, 'profit': rev - cost, 'profit_percent': rev > 0 ? ((rev - cost) / rev) * 100 : 0};
-  }
-  
-  Future<Map<String, double>> getMonthlyProfitStats(int y, int m) async {
-    final prefix = "$y-${m.toString().padLeft(2, '0')}";
-    final db = await database;
-    final s = await db.rawQuery("SELECT COALESCE(SUM(si.price*si.quantity), 0) as s, COALESCE(SUM(si.purchase_price*si.quantity), 0) as c FROM Sale_Items si JOIN Sales sa ON si.sale_id = sa.sale_id WHERE sa.sale_date LIKE ?", ["$prefix%"]);
-    final r = await db.rawQuery("SELECT COALESCE(SUM(ri.price*ri.quantity), 0) as s, COALESCE(SUM(ri.purchase_price*ri.quantity), 0) as c FROM Refund_Items ri JOIN Refunds re ON ri.refund_id = re.refund_id WHERE re.refund_date LIKE ?", ["$prefix%"]);
-    double rev = (s.first['s'] as num).toDouble() - (r.first['s'] as num).toDouble();
-    double cost = (s.first['c'] as num).toDouble() - (r.first['c'] as num).toDouble();
-    return {'sales': rev, 'cost': cost, 'profit': rev - cost, 'profit_percent': rev > 0 ? ((rev - cost) / rev) * 100 : 0};
-  }
 
+  // ✅ تقرير اليوم: لا يظهر الفواتير المؤرشفة (لتنظيف التقرير اليومي)
   Future<List<Map<String, dynamic>>> getDailyReportsByCurrency(DateTime d) async {
     final start = DateTime(d.year, d.month, d.day).toIso8601String();
     final end = DateTime(d.year, d.month, d.day).add(const Duration(days: 1)).toIso8601String();
@@ -383,13 +309,47 @@ class DatabaseHelper {
       FROM (
         SELECT p.sale_currency as currency, SUM(si.price * si.quantity) as sales, SUM(si.purchase_price * si.quantity) as cost
         FROM Sale_Items si JOIN Sales s ON si.sale_id = s.sale_id JOIN Products p ON si.product_id = p.product_id 
-        WHERE s.sale_date >= ? AND s.sale_date < ? GROUP BY p.sale_currency
+        WHERE s.sale_date >= ? AND s.sale_date < ? AND s.archived = 0 GROUP BY p.sale_currency
         UNION ALL
         SELECT p.sale_currency as currency, -SUM(ri.price * ri.quantity) as sales, -SUM(ri.purchase_price * ri.quantity) as cost
         FROM Refund_Items ri JOIN Refunds r ON ri.refund_id = r.refund_id JOIN Products p ON ri.product_id = p.product_id 
-        WHERE r.refund_date >= ? AND r.refund_date < ? GROUP BY p.sale_currency
+        WHERE r.refund_date >= ? AND r.refund_date < ? AND r.archived = 0 GROUP BY p.sale_currency
       ) GROUP BY currency
     """, [start, end, start, end]);
+  }
+
+  // ✅ تقرير الشهر: يشمل كل الفواتير (بما فيها المؤرشفة) لحساب الأرباح الحقيقية
+  Future<List<Map<String, dynamic>>> getMonthlyReportsByCurrency(int y, int m) async {
+    final prefix = "$y-${m.toString().padLeft(2, '0')}";
+    final db = await database;
+    return await db.rawQuery("""
+      SELECT currency, SUM(sales) as sales, SUM(cost) as cost, (SUM(sales) - SUM(cost)) as profit
+      FROM (
+        SELECT p.sale_currency as currency, SUM(si.price * si.quantity) as sales, SUM(si.purchase_price * si.quantity) as cost
+        FROM Sale_Items si JOIN Sales s ON si.sale_id = s.sale_id JOIN Products p ON si.product_id = p.product_id 
+        WHERE s.sale_date LIKE ? GROUP BY p.sale_currency
+        UNION ALL
+        SELECT p.sale_currency as currency, -SUM(ri.price * ri.quantity) as sales, -SUM(ri.purchase_price * ri.quantity) as cost
+        FROM Refund_Items ri JOIN Refunds r ON ri.refund_id = r.refund_id JOIN Products p ON ri.product_id = p.product_id 
+        WHERE r.refund_date LIKE ? GROUP BY p.sale_currency
+      ) GROUP BY currency
+    """, ["$prefix%", "$prefix%"]);
+  }
+
+  // ✅ بيانات الرسم البياني للسنة: تشمل كل شيء لحساب مبيعات الشهور بدقة
+  Future<List<double>> getYearlySalesData(int year) async {
+    final db = await database;
+    List<double> monthlySales = List.filled(12, 0.0);
+    for (int i = 1; i <= 12; i++) {
+      final prefix = "$year-${i.toString().padLeft(2, '0')}";
+      final res = await db.rawQuery("""
+        SELECT (COALESCE(SUM(si.price * si.quantity), 0) - COALESCE((SELECT SUM(ri.price * ri.quantity) FROM Refund_Items ri JOIN Refunds r ON ri.refund_id = r.refund_id WHERE r.refund_date LIKE ?), 0)) as total
+        FROM Sale_Items si JOIN Sales s ON si.sale_id = s.sale_id
+        WHERE s.sale_date LIKE ?
+      """, ["$prefix%", "$prefix%"]);
+      monthlySales[i - 1] = (res.first['total'] as num?)?.toDouble() ?? 0.0;
+    }
+    return monthlySales;
   }
 
   // --- الملاحظات ---

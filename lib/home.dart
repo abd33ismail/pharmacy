@@ -6,7 +6,7 @@ import 'inventory.dart';
 import 'expiration.dart';
 import 'daily-reports.dart';
 import 'notes.dart';
-import 'barcode-image.dart';
+import 'SmartInventoryScreen.dart';
 import 'daily_invoices_report.dart';
 
 // --- Widget الأيقونة المتحركة ✨ ---
@@ -171,7 +171,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     '',
                     Icons.camera_alt,
                     const Color(0xFFAB47BC),
-                    const BarcodeImageScreen(),
+                    const SmartInventoryScreen(),
+
                   ),
                 ],
               ),

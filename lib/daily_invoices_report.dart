@@ -17,11 +17,13 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
   bool _isLoading = true;
   StreamSubscription? _dbSubscription;
 
+  // ✅ قائمة المعرفات المحددة
+  final Set<int> _selectedIds = {};
+
   @override
   void initState() {
     super.initState();
     _fetchInvoices();
-    // استماع للتغييرات في قاعدة البيانات لتحديث القائمة تلقائياً عند نجاح المزامنة
     _dbSubscription = DatabaseHelper.instance.onDatabaseChanged.listen((_) {
       _fetchInvoices(showLoading: false);
     });
@@ -44,6 +46,65 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
     }
   }
 
+  // ✅ منطق التحديد
+  void _toggleSelection(int id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _clearSelection() {
+    setState(() => _selectedIds.clear());
+  }
+
+  void _selectAll() {
+    setState(() {
+      for (var inv in _invoices) {
+        _selectedIds.add(inv['sale_id'] as int);
+      }
+    });
+  }
+
+  Future<void> _deleteSelectedInvoices() async {
+    final count = _selectedIds.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("confirm_delete").tr(),
+        content: Text("${'confirm_delete_selected'.tr()} ($count)"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("cancel").tr(),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("delete").tr(),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() => _isLoading = true);
+      for (final id in _selectedIds) {
+        await DatabaseHelper.instance.deleteSale(id);
+      }
+      _selectedIds.clear();
+      await _fetchInvoices();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('invoices_deleted_successfully'.tr())),
+        );
+      }
+    }
+  }
+
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -52,6 +113,7 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
       lastDate: DateTime.now(),
     );
     if (picked != null && picked != _selectedDate) {
+      _clearSelection();
       setState(() => _selectedDate = picked);
       _fetchInvoices();
     }
@@ -59,15 +121,36 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isSelectionMode = _selectedIds.isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('daily_sales_report').tr(),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.calendar_today),
-            onPressed: () => _selectDate(context),
-          ),
-        ],
+        // ✅ شكل الـ AppBar يتغير عند التحديد
+        leading: isSelectionMode
+            ? IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection)
+            : null,
+        title: isSelectionMode
+            ? Text('${_selectedIds.length}')
+            : const Text('daily_sales_report').tr(),
+        actions: isSelectionMode
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.select_all),
+                  onPressed: _selectAll,
+                  tooltip: 'select_all'.tr(),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete),
+                  onPressed: _deleteSelectedInvoices,
+                  tooltip: 'delete'.tr(),
+                ),
+              ]
+            : [
+                IconButton(
+                  icon: const Icon(Icons.calendar_today),
+                  onPressed: () => _selectDate(context),
+                ),
+              ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -77,6 +160,8 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                   itemCount: _invoices.length,
                   itemBuilder: (context, index) {
                     final invoice = _invoices[index];
+                    final saleId = invoice['sale_id'] as int;
+                    final isSelected = _selectedIds.contains(saleId);
                     final saleDate = DateTime.parse(invoice['sale_date']);
                     final isRefunded = (invoice['is_refunded'] as int? ?? 0) > 0;
                     final isSynced = (invoice['synced'] as int? ?? 0) == 1;
@@ -85,8 +170,9 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                         : invoice['sale_id'].toString();
                     
                     return Dismissible(
-                      key: Key(invoice['sale_id'].toString()),
-                      direction: DismissDirection.endToStart,
+                      key: Key(saleId.toString()),
+                      // تعطيل السحب عند وجود تحديد
+                      direction: isSelectionMode ? DismissDirection.none : DismissDirection.endToStart,
                       background: Container(
                         alignment: Alignment.centerRight,
                         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -114,7 +200,7 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                         );
                       },
                       onDismissed: (direction) async {
-                        await DatabaseHelper.instance.deleteSale(invoice['sale_id']);
+                        await DatabaseHelper.instance.deleteSale(saleId);
                         _fetchInvoices();
                         if (!mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -123,12 +209,34 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                       },
                       child: Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        // ✅ تغيير لون الكرت المختار
+                        color: isSelected ? Colors.blue.withValues(alpha: 0.1) : null,
+                        elevation: isSelected ? 0 : 1,
                         child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: isRefunded 
-                              ? Colors.grey 
-                              : (invoice['edited'] == 1 ? Colors.orange : Colors.blue),
-                            child: Text('#$displayId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          selected: isSelected,
+                          onLongPress: () => _toggleSelection(saleId), // ✅ الضغط المطول للتحديد
+                          onTap: isSelectionMode 
+                              ? () => _toggleSelection(saleId) // ✅ النقر العادي للتحديد إذا كان الوضع مفعلاً
+                              : () => _showInvoiceDetails(invoice), // ✅ النقر العادي لعرض التفاصيل
+                          leading: Stack(
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: isRefunded 
+                                  ? Colors.grey 
+                                  : (invoice['edited'] == 1 ? Colors.orange : Colors.blue),
+                                child: Text('#$displayId', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                              ),
+                              if (isSelected) // ✅ علامة صح عند التحديد
+                                Positioned.fill(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withValues(alpha: 0.6),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.check, color: Colors.white, size: 20),
+                                  ),
+                                ),
+                            ],
                           ),
                           title: Row(
                             children: [
@@ -157,23 +265,26 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (isSynced)
-                                const Padding(
-                                  padding: EdgeInsets.only(right: 8.0),
-                                  child: Icon(Icons.cloud_done, color: Colors.green, size: 18),
+                              if (isSelected) 
+                                const Icon(Icons.check_circle, color: Colors.blue)
+                              else ...[
+                                if (isSynced)
+                                  const Padding(
+                                    padding: EdgeInsets.only(right: 8.0),
+                                    child: Icon(Icons.cloud_done, color: Colors.green, size: 18),
+                                  ),
+                                Text(
+                                  '${invoice['total_amount']} ',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold, 
+                                    color: isRefunded ? Colors.grey : Colors.green,
+                                    decoration: isRefunded ? TextDecoration.lineThrough : null,
+                                  ),
                                 ),
-                              Text(
-                                '${invoice['total_amount']} ',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold, 
-                                  color: isRefunded ? Colors.grey : Colors.green,
-                                  decoration: isRefunded ? TextDecoration.lineThrough : null,
-                                ),
-                              ),
-                              const Icon(Icons.arrow_forward_ios, size: 16),
+                                const Icon(Icons.arrow_forward_ios, size: 16),
+                              ]
                             ],
                           ),
-                          onTap: () => _showInvoiceDetails(invoice),
                         ),
                       ),
                     );

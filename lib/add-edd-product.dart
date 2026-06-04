@@ -8,8 +8,9 @@ import 'datdbase.dart';
 
 class AddProductScreen extends StatefulWidget {
   final Map<String, dynamic>? product;
+  final String? initialBarcode; // ✅ أضف هذا
 
-  const AddProductScreen({super.key, this.product});
+  const AddProductScreen({super.key, this.product, this.initialBarcode});
 
   @override
   State<AddProductScreen> createState() => _AddProductScreenState();
@@ -35,9 +36,12 @@ class _AddProductScreenState extends State<AddProductScreen> {
   @override
   void initState() {
     super.initState();
+    // ✅ استخدم القيمة الممررة في البداية
+    _barcodeController.text = widget.product?['barcode'] ?? widget.initialBarcode ?? '';
+
     if (widget.product != null) {
       _nameController.text = widget.product!['name'];
-      _barcodeController.text = widget.product!['barcode'] ?? '';
+      // _barcodeController.text = widget.product!['barcode'] ?? ''; // تم نقلها للأعلى
       salePrice = (widget.product!['sale_price'] as num?)?.toDouble() ?? 0.0;
       saleCurrency = Currency.values.firstWhere((e) => e.name == widget.product!['sale_currency'], orElse: () => Currency.syp);
       purchasePrice = (widget.product!['purchase_price'] as num?)?.toDouble() ?? 0.0;

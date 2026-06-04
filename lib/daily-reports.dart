@@ -29,13 +29,18 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
 
   }
 
+  @override
+  void dispose() {
+    _dbChangesSubscription.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadReportData() async {
     setState(() => _isLoading = true);
     final reports = await DatabaseHelper.instance.getDailyReportsByCurrency(_selectedDate);
     final db = await DatabaseHelper.instance.database;
     String dateStr = DateFormat('yyyy-MM-dd', 'en_US').format(_selectedDate);
 
-    // Updated query to subtract refunded items from the daily product totals
     final salesResults = await db.rawQuery('''
       SELECT 
         productName,
@@ -51,7 +56,7 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
         FROM Sale_Items si
         JOIN Sales s ON si.sale_id = s.sale_id
         JOIN Products p ON si.product_id = p.product_id
-        WHERE DATE(s.sale_date) = ?
+        WHERE DATE(s.sale_date) = ? AND s.archived = 0
         GROUP BY p.name, p.sale_currency
         
         UNION ALL
@@ -64,7 +69,7 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
         FROM Refund_Items ri
         JOIN Refunds r ON ri.refund_id = r.refund_id
         JOIN Products p ON ri.product_id = p.product_id
-        WHERE DATE(r.refund_date) = ?
+        WHERE DATE(r.refund_date) = ? AND r.archived = 0
         GROUP BY p.name, p.sale_currency
       ) 
       GROUP BY productName, sale_currency
@@ -101,15 +106,24 @@ class _DailyReportsScreenState extends State<DailyReportsScreen> {
     if (confirm == true) {
       final db = await DatabaseHelper.instance.database;
       String dateStr = DateFormat('yyyy-MM-dd', 'en_US').format(_selectedDate);
-      final salesToDelete = await db.query('Sales', where: 'DATE(sale_date) = ?', whereArgs: [dateStr], columns: ['sale_id']);
-      final ids = salesToDelete.map((row) => row['sale_id']).toList();
+      
+      // ✅ تغيير المنطق: بدلاً من حذف البيانات نهائياً، نقوم بأرشفتها (archived = 1)
+      // هذا ينظف الشاشة اليومية ويحمي التقارير الشهرية
+      final salesToArchive = await db.query('Sales', 
+        where: 'DATE(sale_date) = ? AND archived = 0', 
+        whereArgs: [dateStr], 
+        columns: ['sale_id']
+      );
+      
+      final ids = salesToArchive.map((row) => row['sale_id'] as int).toList();
 
       if (ids.isNotEmpty) {
-        await db.transaction((txn) async {
-          await txn.delete('Sale_Items', where: 'sale_id IN (${ids.map((_) => '?').join(',')})', whereArgs: ids);
-          await txn.delete('Sales', where: 'sale_id IN (${ids.map((_) => '?').join(',')})', whereArgs: ids);
-        });
+        setState(() => _isLoading = true);
+        for (final id in ids) {
+          await DatabaseHelper.instance.deleteSale(id);
+        }
       }
+      
       _loadReportData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('records_deleted_successfully'.tr())));
