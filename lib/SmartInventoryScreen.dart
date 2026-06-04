@@ -146,31 +146,93 @@ class _SmartInventoryScreenState extends State<SmartInventoryScreen> {
               final p = _suggestedProducts[index];
               return Card(
                 elevation: 2,
-                child: ListTile(
+                child: ExpansionTile(
                   leading: const Icon(Icons.medication, color: Colors.blue),
                   title: Text(p['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text('الكمية: ${p['quantity']} | السعر: ${p['sale_price']}'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.shopping_cart, color: Colors.green),
-                        onPressed: () async {
-                          Navigator.pop(ctx);
-                          await _updateQuantity(p, -1);
-                          _searchProducts(lastSearch); // تحديث القائمة فوراً
-                        },
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // معلومات المنتج
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'تفاصيل المنتج',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                ),
+                                const SizedBox(height: 8),
+                                Text('الفئة: ${p['category'] ?? 'غير محدد'}', style: const TextStyle(fontSize: 12)),
+                                Text('السعر: ${p['sale_price']} (${p['sale_currency'] ?? 'SYP'})', style: const TextStyle(fontSize: 12)),
+                                Text('المخزون: ${p['quantity']} وحدة', style: const TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          // الخيارات
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  icon: const Icon(Icons.shopping_cart),
+                                  label: const Text('بيع'),
+                                  onPressed: () async {
+                                    Navigator.pop(ctx);
+                                    _showSaleDialog(p);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('إضافة'),
+                                  onPressed: () async {
+                                    Navigator.pop(ctx);
+                                    await _updateQuantity(p, 1);
+                                    _searchProducts(lastSearch);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.orange,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  icon: const Icon(Icons.remove),
+                                  label: const Text('خصم'),
+                                  onPressed: () async {
+                                    Navigator.pop(ctx);
+                                    await _updateQuantity(p, -1);
+                                    _searchProducts(lastSearch);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.add_box, color: Colors.blue),
-                        onPressed: () async {
-                          Navigator.pop(ctx);
-                          await _updateQuantity(p, 1);
-                          _searchProducts(lastSearch); // تحديث القائمة فوراً
-                        },
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               );
             },
@@ -181,6 +243,104 @@ class _SmartInventoryScreenState extends State<SmartInventoryScreen> {
         ],
       ),
     );
+  }
+
+  void _showSaleDialog(Map<String, dynamic> product) {
+    int quantity = 1;
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('بيع المنتج'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('المنتج: ${product['name']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Text('السعر: ${product['sale_price']} ${product['sale_currency'] ?? "SYP"}'),
+              const SizedBox(height: 12),
+              Text('المخزون المتاح: ${product['quantity']}'),
+              const SizedBox(height: 20),
+              const Text('أدخل الكمية:'),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle, color: Colors.red),
+                    onPressed: () {
+                      if (quantity > 1) {
+                        setState(() => quantity--);
+                      }
+                    },
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.blue),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '$quantity',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle, color: Colors.green),
+                    onPressed: () {
+                      if (quantity < product['quantity']) {
+                        setState(() => quantity++);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'الإجمالي: ${(product['sale_price'] as num) * quantity} ${product['sale_currency'] ?? "SYP"}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await _processSale(product, quantity);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              child: const Text('تأكيد البيع'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _processSale(Map<String, dynamic> product, int quantity) async {
+    try {
+      final int currentQty = (product['quantity'] as int? ?? 0);
+      
+      if (quantity <= 0 || quantity > currentQty) {
+        _showMessage("الكمية غير صحيحة");
+        return;
+      }
+
+      // تحديث المخزون
+      await DatabaseHelper.instance.updateProduct({
+        'product_id': product['product_id'],
+        'quantity': currentQty - quantity,
+        'name': product['name'],
+        'category': product['category'],
+      });
+      
+      _showMessage("تم بيع $quantity وحدة بنجاح");
+    } catch (e) {
+      debugPrint("Sale Error: $e");
+      _showMessage("حدث خطأ أثناء البيع");
+    }
   }
 
   Future<void> _updateQuantity(Map<String, dynamic> product, int change) async {
