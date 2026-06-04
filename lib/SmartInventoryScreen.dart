@@ -453,7 +453,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
   void initState() {
     super.initState();
     controller = MobileScannerController(
-      detectionSpeed: DetectionSpeed.nonstop,
+      detectionSpeed: DetectionSpeed.normal,
       facing: CameraFacing.back,
       torchEnabled: false,
       returnImage: false,
@@ -491,7 +491,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
     _isDetected = true;
     _lastDetectionTime = now;
 
-    debugPrint("Barcode detected: $barcodeValue");
+    debugPrint("✅ Barcode detected: $barcodeValue");
     HapticFeedback.mediumImpact();
 
     if (mounted) {
@@ -554,18 +554,20 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
               final List<Barcode> barcodes = capture.barcodes;
               
               if (barcodes.isEmpty) {
-                debugPrint("No barcodes detected");
+                debugPrint("⏳ No barcodes detected yet");
                 return;
               }
 
+              debugPrint("🔍 Detected ${barcodes.length} barcode(s)");
+              
               for (final barcode in barcodes) {
                 final String? rawValue = barcode.rawValue;
                 
-                debugPrint('Detected barcode: $rawValue');
+                debugPrint('📱 Barcode value: $rawValue');
                 
                 if (rawValue != null && rawValue.isNotEmpty && !_isDetected) {
                   _processBarcode(rawValue);
-                  break; // معالجة الباركود الأول فقط
+                  break;
                 }
               }
             },
