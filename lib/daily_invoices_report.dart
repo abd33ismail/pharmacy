@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -14,20 +15,33 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _invoices = [];
   bool _isLoading = true;
+  StreamSubscription? _dbSubscription;
 
   @override
   void initState() {
     super.initState();
     _fetchInvoices();
+    // استماع للتغييرات في قاعدة البيانات لتحديث القائمة تلقائياً عند نجاح المزامنة
+    _dbSubscription = DatabaseHelper.instance.onDatabaseChanged.listen((_) {
+      _fetchInvoices(showLoading: false);
+    });
   }
 
-  Future<void> _fetchInvoices() async {
-    setState(() => _isLoading = true);
+  @override
+  void dispose() {
+    _dbSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchInvoices({bool showLoading = true}) async {
+    if (showLoading) setState(() => _isLoading = true);
     final data = await DatabaseHelper.instance.getTodayInvoices(_selectedDate);
-    setState(() {
-      _invoices = data;
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _invoices = data;
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _selectDate(BuildContext context) async {
@@ -65,6 +79,7 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                     final invoice = _invoices[index];
                     final saleDate = DateTime.parse(invoice['sale_date']);
                     final isRefunded = (invoice['is_refunded'] as int? ?? 0) > 0;
+                    final isSynced = (invoice['synced'] as int? ?? 0) == 1;
                     final String displayId = invoice['invoice_daily'] != null 
                         ? invoice['invoice_daily'].toString().split('-').last 
                         : invoice['sale_id'].toString();
@@ -142,6 +157,11 @@ class _DailyInvoicesReportState extends State<DailyInvoicesReport> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (isSynced)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 8.0),
+                                  child: Icon(Icons.cloud_done, color: Colors.green, size: 18),
+                                ),
                               Text(
                                 '${invoice['total_amount']} ',
                                 style: TextStyle(

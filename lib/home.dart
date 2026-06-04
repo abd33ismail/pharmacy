@@ -52,7 +52,7 @@ class _AnimatedIconWidgetState extends State<AnimatedIconWidget>
   Widget build(BuildContext context) {
     return ScaleTransition(
       scale: _scaleAnimation,
-      child: Icon(widget.icon, size: 40, color: widget.color),
+      child: Icon(widget.icon, size: 36, color: widget.color),
     );
   }
 }
@@ -206,22 +206,29 @@ class _HomeScreenState extends State<HomeScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         color: Colors.white,
         child: Padding(
-          padding: const EdgeInsets.all(8.0),
+          padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              AnimatedIconWidget(icon: icon, color: color),
-              const SizedBox(height: 12),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
+              Flexible(child: AnimatedIconWidget(icon: icon, color: color)),
+              const SizedBox(height: 8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                ),
               ),
               if (value.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  value,
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color),
+                const SizedBox(height: 4),
+                Flexible(
+                  child: Text(
+                    value,
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color),
+                  ),
                 ),
               ],
             ],

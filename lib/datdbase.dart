@@ -6,6 +6,7 @@ import 'package:path/path.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 // --- دالة عالمية للمزامنة السريعة ---
 Future<void> addMedicine({
@@ -29,7 +30,7 @@ Future<void> addMedicine({
     await http.post(url, body: body);
     DatabaseHelper.instance.notifyListeners();
   } catch (e) {
-    print("Sync error: $e");
+    debugPrint("Sync error: $e");
   }
 }
 
@@ -38,7 +39,6 @@ class DatabaseHelper {
   static Database? _database;
   DatabaseHelper._init();
 
-  // نظام البث للتحديث التلقائي للواجهات
   final _dbChangesController = StreamController<void>.broadcast();
   Stream<void> get onDatabaseChanged => _dbChangesController.stream;
 
@@ -55,7 +55,7 @@ class DatabaseHelper {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 15, onCreate: _createDB, onUpgrade: _onUpgrade);
+    return await openDatabase(path, version: 16, onCreate: _createDB, onUpgrade: _onUpgrade);
   }
 
   Future _onUpgrade(Database db, int oldVer, int newVer) async {
@@ -72,10 +72,19 @@ class DatabaseHelper {
         )
       ''');
     }
+    if (oldVer < 16) {
+      try {
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_barcode ON Products(barcode)');
+      } catch (_) {}
+    }
   }
 
   Future _createDB(Database db, int version) async {
     await db.execute('''CREATE TABLE Products (product_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL, barcode TEXT UNIQUE, purchase_price REAL, purchase_currency TEXT, sale_price REAL, sale_currency TEXT, quantity INTEGER, expiry_date TEXT, image TEXT, created_at TEXT, uuid TEXT, synced INTEGER DEFAULT 0, updated_at TEXT, deleted INTEGER DEFAULT 0)''');
+    
+    // إضافة Index للباركود للبحث الفوري
+    await db.execute('CREATE INDEX idx_products_barcode ON Products(barcode)');
+
     await db.execute('''CREATE TABLE Sales (sale_id INTEGER PRIMARY KEY AUTOINCREMENT, sale_date TEXT, total_amount REAL, edited INTEGER DEFAULT 0, synced INTEGER DEFAULT 0, invoice_daily TEXT)''');
     await db.execute('''CREATE TABLE Sale_Items (id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, quantity INTEGER, price REAL, purchase_price REAL, FOREIGN KEY (sale_id) REFERENCES Sales (sale_id) ON DELETE CASCADE, FOREIGN KEY (product_id) REFERENCES Products (product_id))''');
     await db.execute('''CREATE TABLE Refunds (refund_id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, refund_date TEXT, total_refund REAL, note TEXT, synced INTEGER DEFAULT 0)''');
@@ -89,9 +98,10 @@ class DatabaseHelper {
     try {
       await pushProducts();
       await fetchProducts();
+      await pushSales();
       notifyListeners();
     } catch (e) {
-      print("Global Sync Error: $e");
+      debugPrint("Global Sync Error: $e");
     }
   }
 
@@ -141,6 +151,64 @@ class DatabaseHelper {
     } catch (_) {}
   }
 
+  Future<void> pushSales() async {
+    final db = await database;
+    final unsyncedSales = await db.query('Sales', where: 'synced = 0');
+    
+    if (unsyncedSales.isNotEmpty) {
+      debugPrint("Found ${unsyncedSales.length} unsynced sales. Starting sync...");
+    }
+
+    for (var sale in unsyncedSales) {
+      int saleId = sale['sale_id'] as int;
+      final items = await db.rawQuery("""
+        SELECT si.*, p.name 
+        FROM Sale_Items si 
+        JOIN Products p ON si.product_id = p.product_id
+        WHERE si.sale_id = ?
+      """, [saleId]);
+
+      Map<String, dynamic> invoiceData = {
+        "sale_id": saleId,
+        "invoice_number": sale['invoice_daily'] ?? "INV-$saleId",
+        "total_amount": sale['total_amount'],
+        "items_count": items.length,
+        "sale_date": sale['sale_date'],
+        "is_refunded": 0,
+        "items": items.map((item) => {
+          "product_name": item['name'],
+          "quantity": item['quantity'],
+          "price": item['price']
+        }).toList()
+      };
+
+      try {
+        var res = await http.post(
+          Uri.parse("http://10.0.2.2/pharmacy_api/save_invoice.php"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode(invoiceData),
+        );
+
+        if (res.statusCode == 200) {
+          final serverData = jsonDecode(res.body);
+          final newInvoiceNumber = serverData['invoice_number'];
+          
+          await db.update('Sales', {
+            'synced': 1, 
+            'invoice_daily': newInvoiceNumber
+          }, where: 'sale_id = ?', whereArgs: [saleId]);
+          
+          debugPrint("Sale $saleId synced successfully with server invoice: $newInvoiceNumber");
+          notifyListeners();
+        } else {
+          debugPrint("Failed to sync sale $saleId: ${res.body}");
+        }
+      } catch (e) {
+        debugPrint("Sales sync error for ID $saleId: $e");
+      }
+    }
+  }
+
   // --- العمليات الأساسية ---
   Future<bool> isBarcodeExists(String barcode, {int? excludeId}) async {
     if (barcode.isEmpty) return false;
@@ -176,16 +244,21 @@ class DatabaseHelper {
     syncAllData();
     return res;
   }
-  Future<List<Map<String, dynamic>>> queryAllProducts() async => (await database).query('Products', where: 'deleted = 0');
+
+  Future<List<Map<String, dynamic>>> queryAllProducts() async => 
+      (await database).query('Products', where: 'deleted = 0', orderBy: 'name ASC');
+  
   Future<int> getTotalProductCount() async {
     final res = await (await database).rawQuery('SELECT COUNT(*) FROM Products WHERE deleted = 0');
     return Sqflite.firstIntValue(res) ?? 0;
   }
+  
   Future<int> getExpirationAlertsCount() async {
     final threshold = DateFormat('yyyy-MM-dd').format(DateTime.now().add(const Duration(days: 30)));
     final res = await (await database).rawQuery("SELECT COUNT(*) FROM Products WHERE deleted = 0 AND quantity > 0 AND expiry_date <= ?", [threshold]);
     return Sqflite.firstIntValue(res) ?? 0;
   }
+
   Future<List<Map<String, dynamic>>> queryStockForExpiration() async => (await database).rawQuery("SELECT p.product_id, p.name AS product_name, p.expiry_date, p.quantity FROM Products p WHERE p.deleted = 0 AND p.quantity > 0 AND p.expiry_date != '' ORDER BY p.expiry_date ASC");
 
   // --- المبيعات ---
@@ -193,31 +266,17 @@ class DatabaseHelper {
     final now = DateTime.now();
     final dateKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
 
-    final existing = await txn.query(
-      'DailyInvoiceCounter',
-      where: 'date = ?',
-      whereArgs: [dateKey],
-    );
+    final existing = await txn.query('DailyInvoiceCounter', where: 'date = ?', whereArgs: [dateKey]);
 
     int newNumber;
-
     if (existing.isEmpty) {
       newNumber = 1;
-      await txn.insert('DailyInvoiceCounter', {
-        'date': dateKey,
-        'last_number': newNumber,
-      });
+      await txn.insert('DailyInvoiceCounter', {'date': dateKey, 'last_number': newNumber});
     } else {
       int last = existing.first['last_number'] as int;
       newNumber = last + 1;
-      await txn.update(
-        'DailyInvoiceCounter',
-        {'last_number': newNumber},
-        where: 'date = ?',
-        whereArgs: [dateKey],
-      );
+      await txn.update('DailyInvoiceCounter', {'last_number': newNumber}, where: 'date = ?', whereArgs: [dateKey]);
     }
-
     return "$dateKey-${newNumber.toString().padLeft(4, '0')}";
   }
 
@@ -228,7 +287,7 @@ class DatabaseHelper {
       int id = await txn.insert('Sales', {
         'sale_date': DateTime.now().toIso8601String(), 
         'total_amount': total, 
-        'synced': 0,
+        'synced': 0, 
         'invoice_daily': dailyNumber,
       });
       for (var item in items) {
@@ -244,45 +303,27 @@ class DatabaseHelper {
     return saleId;
   }
 
+  Future<void> updateInvoiceNumber(int saleId, String invoiceNumber) async {
+    final db = await database;
+    await db.update('Sales', {'invoice_daily': invoiceNumber, 'synced': 1}, where: 'sale_id = ?', whereArgs: [saleId]);
+    notifyListeners();
+  }
+
   Future<void> deleteSale(int saleId) async {
     final db = await database;
-
     await db.transaction((txn) async {
-      // هل الفاتورة عليها مرتجع؟
-      final refund = await txn.query(
-        'Refunds',
-        where: 'sale_id = ?',
-        whereArgs: [saleId],
-      );
-
-      final hasRefund = refund.isNotEmpty;
-
-      if (!hasRefund) {
-        // فقط إذا لم يتم استرجاعها نرجع الكمية
-        final items = await txn.query(
-          'Sale_Items',
-          where: 'sale_id = ?',
-          whereArgs: [saleId],
-        );
-
+      final refund = await txn.query('Refunds', where: 'sale_id = ?', whereArgs: [saleId]);
+      if (refund.isEmpty) {
+        final items = await txn.query('Sale_Items', where: 'sale_id = ?', whereArgs: [saleId]);
         for (var item in items) {
-          await txn.rawUpdate(
-            'UPDATE Products SET quantity = quantity + ?, synced = 0 WHERE product_id = ?',
-            [item['quantity'], item['product_id']],
-          );
+          await txn.rawUpdate('UPDATE Products SET quantity = quantity + ?, synced = 0 WHERE product_id = ?', [item['quantity'], item['product_id']]);
         }
       }
-
-      // حذف البيانات
-      await txn.delete('Refund_Items',
-          where: 'refund_id IN (SELECT refund_id FROM Refunds WHERE sale_id = ?)',
-          whereArgs: [saleId]);
-
+      await txn.delete('Refund_Items', where: 'refund_id IN (SELECT refund_id FROM Refunds WHERE sale_id = ?)', whereArgs: [saleId]);
       await txn.delete('Refunds', where: 'sale_id = ?', whereArgs: [saleId]);
       await txn.delete('Sale_Items', where: 'sale_id = ?', whereArgs: [saleId]);
       await txn.delete('Sales', where: 'sale_id = ?', whereArgs: [saleId]);
     });
-
     notifyListeners();
   }
 
@@ -291,6 +332,7 @@ class DatabaseHelper {
     final end = DateTime(d.year, d.month, d.day).add(const Duration(days: 1)).toIso8601String();
     return await (await database).rawQuery("SELECT s.*, (SELECT COUNT(*) FROM Sale_Items WHERE sale_id = s.sale_id) as items_count, (SELECT COUNT(*) FROM Refunds WHERE sale_id = s.sale_id) as is_refunded FROM Sales s WHERE sale_date >= ? AND sale_date < ? ORDER BY sale_date DESC", [start, end]);
   }
+  
   Future<List<Map<String, dynamic>>> getInvoiceDetails(int id) async => (await database).rawQuery("SELECT si.*, p.name, p.sale_currency FROM Sale_Items si JOIN Products p ON si.product_id = p.product_id WHERE si.sale_id = ?", [id]);
 
   // --- المرتجعات ---
@@ -321,6 +363,7 @@ class DatabaseHelper {
     double cost = (s.first['total_cost'] as num).toDouble() - (r.first['refund_cost'] as num).toDouble();
     return {'sales': rev, 'cost': cost, 'profit': rev - cost, 'profit_percent': rev > 0 ? ((rev - cost) / rev) * 100 : 0};
   }
+  
   Future<Map<String, double>> getMonthlyProfitStats(int y, int m) async {
     final prefix = "$y-${m.toString().padLeft(2, '0')}";
     final db = await database;
@@ -330,6 +373,7 @@ class DatabaseHelper {
     double cost = (s.first['c'] as num).toDouble() - (r.first['c'] as num).toDouble();
     return {'sales': rev, 'cost': cost, 'profit': rev - cost, 'profit_percent': rev > 0 ? ((rev - cost) / rev) * 100 : 0};
   }
+
   Future<List<Map<String, dynamic>>> getDailyReportsByCurrency(DateTime d) async {
     final start = DateTime(d.year, d.month, d.day).toIso8601String();
     final end = DateTime(d.year, d.month, d.day).add(const Duration(days: 1)).toIso8601String();
